@@ -12,13 +12,12 @@ It holds no secrets or sealing IP (it's a thin HTTP client of the VeilCC API).
 ## One-time setup
 
 1. **Create two tap repos** (public) under your org:
-   - `almata-ai/homebrew-tap` (Homebrew)
-   - `almata-ai/scoop-bucket` (Scoop, Windows)
-   Each just needs to exist (a README is fine); GoReleaser commits the formula/manifest.
+   - `almata-ai/homebrew-tap` (Homebrew) — just needs to exist; GoReleaser commits the
+     formula. (Scoop/Windows can be added later with a `scoop-bucket` repo.)
 
 2. **A token for cross-repo publishing.** The default `GITHUB_TOKEN` can't push to
    other repos, so create a fine-grained PAT (or classic PAT) with **contents: write**
-   on `homebrew-tap` and `scoop-bucket`, and add it to **this** repo as the secret
+   on `homebrew-tap`, and add it to **this** repo as the secret
    **`HOMEBREW_TAP_GITHUB_TOKEN`** (Settings → Secrets and variables → Actions).
 
 3. **Create + push this repo:**
@@ -40,10 +39,6 @@ cask + Scoop manifest. (Validate locally first with `goreleaser release --snapsh
 ```sh
 # macOS / Linux
 brew install almata-ai/tap/veil
-
-# Windows
-scoop bucket add almata-ai https://github.com/almata-ai/scoop-bucket
-scoop install veil
 
 # Go toolchain
 go install github.com/almata-ai/veil-cli@latest

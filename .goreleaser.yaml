@@ -51,13 +51,3 @@ homebrew_casks:
           on_macos do
             run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/veil"]
           end
-
-# Scoop (Windows).
-scoops:
-  - repository:
-      owner: almata-ai
-      name: scoop-bucket
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://veilcc.com"
-    description: "Protect compiled binaries against AI reverse-engineering (VeilCC CLI)"
-    license: "MIT"
