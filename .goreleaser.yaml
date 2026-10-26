@@ -1,0 +1,63 @@
+# GoReleaser — cross-compiles veil, cuts a GitHub Release, and publishes a Homebrew
+# cask + Scoop manifest. Run by .github/workflows/release.yml on a v* tag.
+version: 2
+project_name: veil
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: veil
+    main: .
+    binary: veil
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: veil
+    name_template: "veil_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: almata-ai
+    name: veil-cli
+
+# Homebrew (macOS/Linux). Needs HOMEBREW_TAP_GITHUB_TOKEN with write access to the tap.
+homebrew_casks:
+  - name: veil
+    binaries:
+      - veil
+    homepage: "https://veilcc.com"
+    description: "Protect compiled binaries against AI reverse-engineering (VeilCC CLI)"
+    repository:
+      owner: almata-ai
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    # The binary is unsigned; clear the quarantine bit so macOS runs it.
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/veil"]
+          end
+
+# Scoop (Windows).
+scoops:
+  - repository:
+      owner: almata-ai
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://veilcc.com"
+    description: "Protect compiled binaries against AI reverse-engineering (VeilCC CLI)"
+    license: "MIT"
