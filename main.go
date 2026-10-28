@@ -5,7 +5,8 @@
 // and writes back the protected artifact plus a signed receipt. It is a thin,
 // dependency-free HTTP client over the same API the console and GitHub Action use.
 //
-//	veil protect --level seal app.o -o app.sealed.o
+//	veil protect --seal app.o -o app.sealed.o
+//	veil protect --obfuscate --seal module.ll -o module.o   # stack both (needs IR)
 //	veil verify build-receipt.json --artifact app.sealed.o
 package main
 
@@ -97,7 +98,10 @@ type protectResponse struct {
 
 func cmdProtect(args []string) error {
 	fs := flag.NewFlagSet("protect", flag.ExitOnError)
-	level := fs.String("level", "seal", "obfuscate | seal | device-bound")
+	obfuscate := fs.Bool("obfuscate", false, "obfuscate the whole module (needs LLVM IR / source)")
+	seal := fs.Bool("seal", false, "seal the annotated functions (encrypt at rest)")
+	sealKey := fs.String("seal-key", "embedded", "seal key mode: embedded | device-bound")
+	level := fs.String("level", "", "legacy alias: obfuscate | seal | device-bound (maps to --obfuscate/--seal)")
 	var protos multiFlag
 	fs.Var(&protos, "proto", "sealed function C signature (repeatable), e.g. \"uint32_t check_license(const char*)\"")
 	symbols := fs.String("symbols", "", "comma-separated symbols to protect when source has no annotation")
@@ -129,8 +133,63 @@ func cmdProtect(args []string) error {
 		return fmt.Errorf("reading %s: %w", input, err)
 	}
 
+	// Protection is composable: obfuscate and/or seal, with device-bound a seal key-mode.
+	// If neither --obfuscate nor --seal was given, fall back to legacy --level (default seal).
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	doObf, doSeal, sk := *obfuscate, *seal, *sealKey
+	if !set["obfuscate"] && !set["seal"] {
+		lv := *level
+		if lv == "" {
+			lv = "seal"
+		}
+		switch lv {
+		case "obfuscate":
+			doObf = true
+		case "seal":
+			doSeal = true
+		case "device-bound":
+			doSeal, sk = true, "device-bound"
+		default:
+			return fmt.Errorf("--level must be obfuscate | seal | device-bound")
+		}
+	}
+	if !doObf && !doSeal {
+		return errors.New("choose at least one of --obfuscate / --seal")
+	}
+	deviceBound := doSeal && sk == "device-bound"
+	// A single-level label so an older gateway still understands the request.
+	compatLevel := "seal"
+	switch {
+	case doObf && !doSeal:
+		compatLevel = "obfuscate"
+	case deviceBound:
+		compatLevel = "device-bound"
+	}
+	modeLabel := ""
+	if doObf {
+		modeLabel = "obfuscate"
+	}
+	if doSeal {
+		if modeLabel != "" {
+			modeLabel += " + "
+		}
+		if deviceBound {
+			modeLabel += "seal (device-bound)"
+		} else {
+			modeLabel += "seal"
+		}
+	}
+
 	// Build the multipart request the same way the console does.
-	fields := map[string]string{"level": *level, "target": *target}
+	fields := map[string]string{"target": *target, "level": compatLevel}
+	if doObf {
+		fields["obfuscate"] = "1"
+	}
+	if doSeal {
+		fields["seal"] = "1"
+		fields["seal_key"] = sk
+	}
 	if len(protos) > 0 {
 		fields["proto"] = strings.Join(protos, "\n")
 	}
@@ -207,7 +266,7 @@ func cmdProtect(args []string) error {
 		}
 	}
 
-	fmt.Printf("veilcc: protected %s → %s (%d bytes, level %s)\n", baseName(input), *out, len(artifact), *level)
+	fmt.Printf("veilcc: protected %s → %s (%d bytes, %s)\n", baseName(input), *out, len(artifact), modeLabel)
 	if pr.Quota != nil {
 		fmt.Printf("        quota: %d of %d used this month\n", pr.Quota.Used, pr.Quota.Limit)
 	}
@@ -255,8 +314,11 @@ func cmdVerify(args []string) error {
 		return fmt.Errorf("MISMATCH: artifact hashes to %s, receipt says %s", got, want)
 	}
 	sealed := receiptField(receiptRaw, "sealed_symbol")
-	level := receiptField(receiptRaw, "level")
-	fmt.Printf("veilcc: receipt verified ✓  hash %s · level %s", want, level)
+	mode := receiptField(receiptRaw, "protect")
+	if mode == "" {
+		mode = receiptField(receiptRaw, "level") // legacy receipts
+	}
+	fmt.Printf("veilcc: receipt verified ✓  hash %s · %s", want, mode)
 	if sealed != "" {
 		fmt.Printf(" · sealed %s", sealed)
 	}

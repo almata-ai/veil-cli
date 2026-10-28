@@ -41,20 +41,24 @@ from `veil login`.
 
 ## Use
 
+Protection is **composable**: obfuscate the whole module and/or seal the annotated
+functions, and sealing's key is `embedded` or `device-bound`. Obfuscation needs LLVM
+IR (`.ll`/`.bc`); sealing works on a compiled object, so stacking both needs IR.
+
 ```sh
 # seal a C/C++ object (functions auto-discovered from veil:seal)
-veil protect --level seal app.o -o app.sealed.o
+veil protect --seal app.o -o app.sealed.o
 
 # seal by symbol + signature (Rust / any C-ABI object)
-veil protect --level seal --symbols check_license \
+veil protect --seal --symbols check_license \
   --proto "uint32_t check_license(const unsigned char*, size_t)" \
   liblicense.o -o license.sealed.o
 
-# obfuscate IR with a fixed, reproducible seed
-veil protect --level obfuscate --seed 0x9f3ac1… module.ll -o module.o
+# obfuscate the module AND seal the crown jewel (needs IR), reproducible seed
+veil protect --obfuscate --seal --seed 0x9f3ac1… module.ll -o module.o
 
-# device-bound: key unwrapped at runtime, never in the file
-veil protect --level device-bound --key-provider veil_key \
+# seal with a device-bound key, unwrapped at runtime, never in the file
+veil protect --seal --seal-key device-bound --key-provider veil_key \
   attest.o -o attest.sealed.o --receipt build-receipt.json
 
 # verify a build receipt against its artifact (offline, e.g. in CI)
@@ -65,16 +69,19 @@ veil verify build-receipt.json --artifact app.sealed.o
 
 | flag | applies to | meaning |
 |------|-----------|---------|
-| `--level` | all | `obfuscate` · `seal` · `device-bound` (default `seal`) |
+| `--obfuscate` | — | obfuscate the whole module (needs LLVM IR / source) |
+| `--seal` | — | seal the annotated functions (encrypt at rest) |
+| `--seal-key` | seal | `embedded` (default) · `device-bound` |
+| `--level` | — | legacy alias: `obfuscate` · `seal` · `device-bound` → maps to the flags above |
 | `--proto` (repeatable) | seal | sealed function's C signature |
-| `--symbols` | all | comma-separated symbols when source has no annotation |
-| `--target` | all | output triple, default `auto-detect` |
+| `--symbols` | both | comma-separated symbols when source has no annotation |
+| `--target` | both | output triple, default `auto-detect` |
 | `--persistent` | seal | cache the decrypted function (default scrubs per call) |
 | `--anti-debug` | seal | fold a debugger-present check into the key |
 | `--key-provider SYM` | device-bound | runtime key-unwrap symbol |
 | `--seed 0x…` | obfuscate | fixed build seed for a reproducible build |
-| `-o`, `--out` | all | output path (required) |
-| `--receipt` | all | write the signed receipt JSON here |
+| `-o`, `--out` | both | output path (required) |
+| `--receipt` | both | write the signed receipt JSON here |
 | `--api-key` | all | overrides `VEILCC_KEY` |
 | `--api-url` | all | self-host / on-prem base URL (`VEILCC_API_URL`) |
 
