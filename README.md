@@ -42,8 +42,10 @@ from `veil login`.
 ## Use
 
 Protection is **composable**: obfuscate the whole module and/or seal the annotated
-functions, and sealing's key is `embedded` or `device-bound`. Obfuscation needs LLVM
-IR (`.ll`/`.bc`); sealing works on a compiled object, so stacking both needs IR.
+functions, and sealing's key is `embedded` or `device-bound`. Obfuscation runs on
+**source** (`.c`/`.cpp`, compiled on the runner) or **LLVM IR** (`.ll`/`.bc`); sealing
+works on a compiled object or source. A pre-compiled object has no IR, so it can be
+sealed but not obfuscated.
 
 ```sh
 # seal a C/C++ object (functions auto-discovered from veil:seal)
@@ -54,8 +56,8 @@ veil protect --seal --symbols check_license \
   --proto "uint32_t check_license(const unsigned char*, size_t)" \
   liblicense.o -o license.sealed.o
 
-# obfuscate the module AND seal the crown jewel (needs IR), reproducible seed
-veil protect --obfuscate --seal --seed 0x9f3ac1… module.ll -o module.o
+# obfuscate the module AND seal the crown jewel (source or IR), reproducible seed
+veil protect --obfuscate --seal --seed 0x9f3ac1… crown.c -o crown.o
 
 # seal with a device-bound key, unwrapped at runtime, never in the file
 veil protect --seal --seal-key device-bound --key-provider veil_key \
