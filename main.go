@@ -98,7 +98,8 @@ type protectResponse struct {
 
 func cmdProtect(args []string) error {
 	fs := flag.NewFlagSet("protect", flag.ExitOnError)
-	obfuscate := fs.Bool("obfuscate", false, "obfuscate the whole module (needs LLVM IR / source)")
+	obfuscate := fs.Bool("obfuscate", false, "obfuscate (source/IR); default MBA + decoys, lighter")
+	obfMax := fs.Bool("obfuscate-max", false, "obfuscate: whole-module max (adds control-flow flattening; heavier)")
 	seal := fs.Bool("seal", false, "seal the annotated functions (encrypt at rest)")
 	sealKey := fs.String("seal-key", "embedded", "seal key mode: embedded | device-bound")
 	level := fs.String("level", "", "legacy alias: obfuscate | seal | device-bound (maps to --obfuscate/--seal)")
@@ -138,7 +139,10 @@ func cmdProtect(args []string) error {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	doObf, doSeal, sk := *obfuscate, *seal, *sealKey
-	if !set["obfuscate"] && !set["seal"] {
+	if *obfMax {
+		doObf = true // --obfuscate-max implies --obfuscate
+	}
+	if !set["obfuscate"] && !set["seal"] && !*obfMax {
 		lv := *level
 		if lv == "" {
 			lv = "seal"
@@ -185,6 +189,9 @@ func cmdProtect(args []string) error {
 	fields := map[string]string{"target": *target, "level": compatLevel}
 	if doObf {
 		fields["obfuscate"] = "1"
+		if *obfMax {
+			fields["obf_max"] = "1"
+		}
 	}
 	if doSeal {
 		fields["seal"] = "1"

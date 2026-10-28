@@ -71,7 +71,8 @@ veil verify build-receipt.json --artifact app.sealed.o
 
 | flag | applies to | meaning |
 |------|-----------|---------|
-| `--obfuscate` | — | obfuscate the whole module (needs LLVM IR / source) |
+| `--obfuscate` | — | obfuscate on source / IR; default MBA + decoys (lighter) |
+| `--obfuscate-max` | obfuscate | also apply control-flow flattening (heavier); implies `--obfuscate` |
 | `--seal` | — | seal the annotated functions (encrypt at rest) |
 | `--seal-key` | seal | `embedded` (default) · `device-bound` |
 | `--level` | — | legacy alias: `obfuscate` · `seal` · `device-bound` → maps to the flags above |
