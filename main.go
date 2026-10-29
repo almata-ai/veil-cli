@@ -2,7 +2,7 @@
 //
 // The protection itself runs server-side (the algorithm never ships in your
 // binary); this CLI uploads a compiled object or LLVM IR, passes your options,
-// and writes back the protected artifact plus a signed receipt. It is a thin,
+// and writes back the protected artifact plus a build receipt. It is a thin,
 // dependency-free HTTP client over the same API the console and GitHub Action use.
 //
 //	veil protect --seal app.o -o app.sealed.o
@@ -104,6 +104,7 @@ func cmdProtect(args []string) error {
 	obfuscate := fs.Bool("obfuscate", false, "obfuscate (source/IR); default MBA + decoys, lighter")
 	obfMax := fs.Bool("obfuscate-max", false, "obfuscate: whole-module max (adds control-flow flattening; heavier)")
 	seal := fs.Bool("seal", false, "seal the annotated functions (encrypt at rest)")
+	strip := fs.Bool("strip", false, "remove debug info and discardable local symbols after protection (also works alone on objects)")
 	sealKey := fs.String("seal-key", "embedded", "seal key mode: embedded | device-bound")
 	level := fs.String("level", "", "legacy alias: obfuscate | seal | device-bound (maps to --obfuscate/--seal)")
 	var protos multiFlag
@@ -116,7 +117,7 @@ func cmdProtect(args []string) error {
 	seed := fs.String("seed", "", "obfuscate: fixed build seed (0x…) for a reproducible build")
 	out := fs.String("out", "", "output path for the protected artifact (required)")
 	fs.StringVar(out, "o", "", "shorthand for --out")
-	receiptOut := fs.String("receipt", "", "write the signed build receipt JSON here")
+	receiptOut := fs.String("receipt", "", "write the build receipt JSON here")
 	apiKey := fs.String("api-key", "", "API key (or set VEILCC_KEY)")
 	apiURL := fs.String("api-url", "", "Protection API base URL (or set VEILCC_API_URL)")
 	pos := parseArgs(fs, args)
@@ -138,14 +139,14 @@ func cmdProtect(args []string) error {
 	}
 
 	// Protection is composable: obfuscate and/or seal, with device-bound a seal key-mode.
-	// If neither --obfuscate nor --seal was given, fall back to legacy --level (default seal).
+	// With no protection flags, fall back to legacy --level (default seal).
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	doObf, doSeal, sk := *obfuscate, *seal, *sealKey
 	if *obfMax {
 		doObf = true // --obfuscate-max implies --obfuscate
 	}
-	if !set["obfuscate"] && !set["seal"] && !*obfMax {
+	if !set["obfuscate"] && !set["seal"] && !*obfMax && (!*strip || *level != "") {
 		lv := *level
 		if lv == "" {
 			lv = "seal"
@@ -161,13 +162,15 @@ func cmdProtect(args []string) error {
 			return fmt.Errorf("--level must be obfuscate | seal | device-bound")
 		}
 	}
-	if !doObf && !doSeal {
-		return errors.New("choose at least one of --obfuscate / --seal")
+	if !doObf && !doSeal && !*strip {
+		return errors.New("choose at least one of --obfuscate / --seal / --strip")
 	}
 	deviceBound := doSeal && sk == "device-bound"
 	// A single-level label so an older gateway still understands the request.
 	compatLevel := "seal"
 	switch {
+	case !doObf && !doSeal:
+		compatLevel = "" // strip-only must not trigger legacy seal on the gateway
 	case doObf && !doSeal:
 		compatLevel = "obfuscate"
 	case deviceBound:
@@ -188,8 +191,18 @@ func cmdProtect(args []string) error {
 		}
 	}
 
+	if *strip {
+		if modeLabel != "" {
+			modeLabel += " + "
+		}
+		modeLabel += "strip"
+	}
+
 	// Build the multipart request the same way the console does.
 	fields := map[string]string{"target": *target, "level": compatLevel}
+	if *strip {
+		fields["strip"] = "1"
+	}
 	if doObf {
 		fields["obfuscate"] = "1"
 		if *obfMax {
@@ -262,6 +275,10 @@ func cmdProtect(args []string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
+	if *strip && receiptField(pr.Receipt, "strip") != "on" && !pr.Simulated {
+		return errors.New("server did not confirm stripping; update the gateway and runner to support --strip")
+	}
+
 	if pr.Artifact == "" {
 		// The server simulated (no runner configured). Don't write a fake object.
 		return fmt.Errorf("server returned no artifact%s", note(pr.Note))
@@ -286,7 +303,7 @@ func cmdProtect(args []string) error {
 		fmt.Printf("        quota: %d of %d used this month\n", pr.Quota.Used, pr.Quota.Limit)
 	}
 	if h := receiptField(pr.Receipt, "receipt_hash"); h != "" {
-		fmt.Printf("        receipt: %s · signed\n", h)
+		fmt.Printf("        receipt: %s\n", h)
 	}
 	// Expose the artifact path to a GitHub Action step, if present.
 	if gh := os.Getenv("GITHUB_OUTPUT"); gh != "" {

@@ -51,8 +51,8 @@ sealed but not obfuscated.
 # exposure scan — free, unmetered: what a decompiler + AI read first
 veil scan app.o
 
-# seal a C/C++ object (functions auto-discovered from veil:seal)
-veil protect --seal app.o -o app.sealed.o
+# seal a crown-only C/C++ object
+veil protect --seal crown.o --proto "uint32_t check_license(const char*)" -o crown.sealed.o
 
 # seal by symbol + signature (Rust / any C-ABI object)
 veil protect --seal --symbols check_license \
@@ -60,11 +60,12 @@ veil protect --seal --symbols check_license \
   liblicense.o -o license.sealed.o
 
 # obfuscate the module AND seal the crown jewel (source or IR), reproducible seed
-veil protect --obfuscate --seal --seed 0x9f3ac1… crown.c -o crown.o
+veil protect --obfuscate --seal --seed 0x9f3ac1 crown.c \
+  --proto "uint32_t check_license(const char*)" -o crown.o
 
 # seal with a device-bound key, unwrapped at runtime, never in the file
 veil protect --seal --seal-key device-bound --key-provider veil_key \
-  attest.o -o attest.sealed.o --receipt build-receipt.json
+  attest.o --proto "uint32_t attest(const char*)" -o attest.sealed.o --receipt build-receipt.json
 
 # verify a build receipt against its artifact (offline, e.g. in CI)
 veil verify build-receipt.json --artifact app.sealed.o
@@ -75,11 +76,12 @@ veil verify build-receipt.json --artifact app.sealed.o
 | flag | applies to | meaning |
 |------|-----------|---------|
 | `--obfuscate` | — | obfuscate on source / IR; default MBA + decoys (lighter) |
+| `--strip` | all | remove debug info and discardable local symbols after obfuscation/sealing; usable alone on compiled objects |
 | `--obfuscate-max` | obfuscate | also apply control-flow flattening (heavier); implies `--obfuscate` |
 | `--seal` | — | seal the annotated functions (encrypt at rest) |
 | `--seal-key` | seal | `embedded` (default) · `device-bound` |
 | `--level` | — | legacy alias: `obfuscate` · `seal` · `device-bound` → maps to the flags above |
-| `--proto` (repeatable) | seal | sealed function's C signature |
+| `--proto` | seal | sealed function's C signature; hosted API currently accepts one per request |
 | `--symbols` | both | comma-separated symbols when source has no annotation |
 | `--target` | both | output triple, default `auto-detect` |
 | `--persistent` | seal | cache the decrypted function (default scrubs per call) |
@@ -87,7 +89,7 @@ veil verify build-receipt.json --artifact app.sealed.o
 | `--key-provider SYM` | device-bound | runtime key-unwrap symbol |
 | `--seed 0x…` | obfuscate | fixed build seed for a reproducible build |
 | `-o`, `--out` | both | output path (required) |
-| `--receipt` | both | write the signed receipt JSON here |
+| `--receipt` | both | write the build receipt JSON here |
 | `--api-key` | all | overrides `VEILCC_KEY` |
 | `--api-url` | all | self-host / on-prem base URL (`VEILCC_API_URL`) |
 
@@ -95,3 +97,22 @@ On-prem and air-gapped builds point `--api-url` at their own Protection API; the
 object never leaves the network.
 
 Full reference: https://veilcc.com/docs/cli
+
+### Stack metadata stripping
+
+```sh
+veil protect --obfuscate --seal --strip crown.c \
+  --proto "uint32_t check_license(const char*)" -o crown.o --receipt receipt.json
+veil verify receipt.json --artifact crown.o
+```
+
+The stages run in order: IR obfuscation → object sealing → metadata stripping.
+`--strip` uses `llvm-strip --strip-debug -x`, preserving exports and locals needed
+by relocations. `veil protect --strip app.o -o app.stripped.o` strips an object
+without sealing. Stripping removes analysis metadata; it does not encrypt code or
+measure resistance to reverse engineering. The current receipt verifier checks a
+shortened artifact SHA-256 hash; it does not verify a cryptographic signature.
+
+For sealing, use a crown-only compilation unit and supply `--proto`. Keep other
+exported functions and global data in separate host objects. Replacement-object
+builds reject additional exports rather than silently dropping them.
