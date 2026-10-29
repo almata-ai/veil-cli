@@ -40,6 +40,8 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "scan":
+		err = cmdScan(os.Args[2:])
 	case "protect":
 		err = cmdProtect(os.Args[2:])
 	case "verify":
@@ -72,7 +74,8 @@ usage:
   veil login                                   sign in from the browser, store a token
   veil logout                                  forget the stored token
   veil whoami                                  show the workspace the current token belongs to
-  veil protect [flags] <input.o | module.ll>   seal or obfuscate, write the artifact
+  veil scan    <input>                         exposure scan (free, unmetered): what AI reads first
+  veil protect [flags] <input.o | source | ir> seal and/or obfuscate, write the artifact
   veil verify  <receipt.json> --artifact <f>   check a build receipt against its artifact
   veil version
 
@@ -228,15 +231,20 @@ func cmdProtect(args []string) error {
 	fw.Write(data)
 	mw.Close()
 
-	req, err := http.NewRequest("POST", strings.TrimRight(base, "/")+"/api/protect", body)
+	total := int64(body.Len())
+	reqBody, cleanup := uploadBody(body, total, "protecting on the runner…")
+	req, err := http.NewRequest("POST", strings.TrimRight(base, "/")+"/api/protect", reqBody)
 	if err != nil {
+		cleanup()
 		return err
 	}
+	req.ContentLength = total
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	client := &http.Client{Timeout: 3 * time.Minute}
 	resp, err := client.Do(req)
+	cleanup()
 	if err != nil {
 		return fmt.Errorf("Protection API unreachable at %s: %w", base, err)
 	}
@@ -287,6 +295,99 @@ func cmdProtect(args []string) error {
 			f.Close()
 		}
 	}
+	return nil
+}
+
+// ── scan ─────────────────────────────────────────────────────────────────────
+
+type scanResponse struct {
+	OK        bool `json:"ok"`
+	Exposures int  `json:"exposures"`
+	Findings  []struct {
+		Label  string `json:"label"`
+		Detail string `json:"detail"`
+	} `json:"findings"`
+	Error string `json:"error"`
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// cmdScan runs the always-free, unmetered exposure scan: what a decompiler + an AI
+// read out of a binary first. It does not consume the monthly build quota.
+func cmdScan(args []string) error {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	apiKey := fs.String("api-key", "", "API key (or set VEILCC_KEY)")
+	apiURL := fs.String("api-url", "", "Protection API base URL (or set VEILCC_API_URL)")
+	pos := parseArgs(fs, args)
+	if len(pos) != 1 {
+		return errors.New("expected exactly one input file to scan")
+	}
+	input := pos[0]
+	key, base := resolveAuth(*apiKey, *apiURL)
+	if key == "" {
+		return errors.New("not authenticated: run `veil login`, or set VEILCC_KEY, or pass --api-key")
+	}
+	data, err := os.ReadFile(input)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", input, err)
+	}
+
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	fw, err := mw.CreateFormFile("binary", baseName(input))
+	if err != nil {
+		return err
+	}
+	fw.Write(data)
+	mw.Close()
+
+	total := int64(body.Len())
+	reqBody, cleanup := uploadBody(body, total, "scanning…")
+	req, err := http.NewRequest("POST", strings.TrimRight(base, "/")+"/api/scan", reqBody)
+	if err != nil {
+		cleanup()
+		return err
+	}
+	req.ContentLength = total
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	client := &http.Client{Timeout: time.Minute}
+	resp, err := client.Do(req)
+	cleanup()
+	if err != nil {
+		return fmt.Errorf("Protection API unreachable at %s: %w", base, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var sr scanResponse
+	if err := json.Unmarshal(raw, &sr); err != nil {
+		return fmt.Errorf("unexpected response (HTTP %d): %s", resp.StatusCode, truncate(string(raw), 300))
+	}
+	if resp.StatusCode != 200 || !sr.OK {
+		if sr.Error != "" {
+			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, sr.Error)
+		}
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	fmt.Printf("veilcc: %d exposure%s in %s  (free, unmetered)\n", sr.Exposures, plural(sr.Exposures), baseName(input))
+	for _, f := range sr.Findings {
+		if f.Detail != "" {
+			fmt.Printf("  ✕ %s — %s\n", f.Label, f.Detail)
+		} else {
+			fmt.Printf("  ✕ %s\n", f.Label)
+		}
+	}
+	ext := filepath.Ext(baseName(input))
+	out := strings.TrimSuffix(baseName(input), ext) + ".sealed" + ext
+	fmt.Printf("  harden these: veil protect --seal %s -o %s\n", baseName(input), out)
 	return nil
 }
 

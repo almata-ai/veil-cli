@@ -48,6 +48,9 @@ works on a compiled object or source. A pre-compiled object has no IR, so it can
 sealed but not obfuscated.
 
 ```sh
+# exposure scan — free, unmetered: what a decompiler + AI read first
+veil scan app.o
+
 # seal a C/C++ object (functions auto-discovered from veil:seal)
 veil protect --seal app.o -o app.sealed.o
 
