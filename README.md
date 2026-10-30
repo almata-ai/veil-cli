@@ -116,3 +116,15 @@ shortened artifact SHA-256 hash; it does not verify a cryptographic signature.
 For sealing, use a crown-only compilation unit and supply `--proto`. Keep other
 exported functions and global data in separate host objects. Replacement-object
 builds reject additional exports rather than silently dropping them.
+
+### Plan limits and upgrade prompts
+
+The hosted API allows one Free build per month, 500 Pro builds, and 1,000,000
+Enterprise builds. Device-bound sealing requires Enterprise. Scanning is unmetered.
+The server checks the workspace's current plan, so existing API keys continue to
+work after upgrades and downgrades.
+
+A blocked feature returns HTTP 403; an exhausted or fully reserved build allowance
+returns HTTP 429. The CLI exits without writing an artifact or receipt and prints
+the server's upgrade/sales URL. Quota errors also include the reset date. Open the
+URL to upgrade; the CLI does not open a browser or initiate payment automatically.

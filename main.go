@@ -21,6 +21,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,9 +95,13 @@ type protectResponse struct {
 		Used  int `json:"used"`
 		Limit int `json:"limit"`
 	} `json:"quota"`
-	Simulated bool   `json:"simulated"`
-	Note      string `json:"note"`
-	Error     string `json:"error"`
+	Simulated   bool   `json:"simulated"`
+	Note        string `json:"note"`
+	Error       string `json:"error"`
+	Code        string `json:"code"`
+	UpgradeURL  string `json:"upgrade_url"`
+	ActionLabel string `json:"action_label"`
+	ResetsAt    string `json:"resets_at"`
 }
 
 func cmdProtect(args []string) error {
@@ -269,6 +274,32 @@ func cmdProtect(args []string) error {
 		return fmt.Errorf("unexpected response (HTTP %d): %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 	if resp.StatusCode != 200 || !pr.OK {
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+			message := pr.Error
+			if message == "" {
+				message = "Your workspace plan does not allow this build."
+			}
+			action, target := pr.ActionLabel, pr.UpgradeURL
+			if action == "" {
+				action = "View plans and allowance"
+			}
+			root, _ := url.Parse(strings.TrimRight(base, "/") + "/")
+			link, err := url.Parse(target)
+			if err != nil || target == "" {
+				link, _ = url.Parse("/#pricing")
+			}
+			if root != nil {
+				link = root.ResolveReference(link)
+			}
+			if link.Scheme != "http" && link.Scheme != "https" {
+				link, _ = url.Parse(strings.TrimRight(base, "/") + "/#pricing")
+			}
+			reset := ""
+			if when, err := time.Parse(time.RFC3339, pr.ResetsAt); err == nil {
+				reset = "\nAllowance resets " + when.UTC().Format("Jan 2, 2006 15:04 MST") + "."
+			}
+			return fmt.Errorf("HTTP %d: %s%s\n%s: %s", resp.StatusCode, message, reset, action, link.String())
+		}
 		if pr.Error != "" {
 			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, pr.Error)
 		}
