@@ -76,6 +76,8 @@ veil verify build-receipt.json --artifact app.sealed.o
 | flag | applies to | meaning |
 |------|-----------|---------|
 | `--obfuscate` | — | obfuscate on source / IR; default MBA + decoys (lighter) |
+| `--post-obfuscate` | all | strip and randomize retained private names after compilation; verify code/data, relocations, and exports/imports |
+| `--scope sealed` | seal | restrict optional IR obfuscation to the exact C symbol selected for sealing (the web workflow) |
 | `--strip` | all | remove debug info and discardable local symbols after obfuscation/sealing; usable alone on compiled objects |
 | `--obfuscate-max` | obfuscate | also apply control-flow flattening (heavier); implies `--obfuscate` |
 | `--seal` | — | seal the annotated functions (encrypt at rest) |
@@ -87,7 +89,7 @@ veil verify build-receipt.json --artifact app.sealed.o
 | `--persistent` | seal | cache the decrypted function (default scrubs per call) |
 | `--anti-debug` | seal | fold a debugger-present check into the key |
 | `--key-provider SYM` | device-bound | runtime key-unwrap symbol |
-| `--seed 0x…` | obfuscate | fixed build seed for a reproducible build |
+| `--seed 0x…` | obfuscate/post-compile | fixed seed for IR transformations and private names; sealing still uses fresh encryption randomness |
 | `-o`, `--out` | both | output path (required) |
 | `--receipt` | both | write the build receipt JSON here |
 | `--api-key` | all | overrides `VEILCC_KEY` |
@@ -98,15 +100,32 @@ object never leaves the network.
 
 Full reference: https://veilcc.com/docs/cli
 
-### Stack metadata stripping
+### Stack post-compile hardening
 
 ```sh
-veil protect --obfuscate --seal --strip crown.c \
+veil protect --obfuscate --seal --post-obfuscate crown.c \
   --proto "uint32_t check_license(const char*)" -o crown.o --receipt receipt.json
 veil verify receipt.json --artifact crown.o
 ```
 
-The stages run in order: IR obfuscation → object sealing → metadata stripping.
+The stages run in order: IR obfuscation → object sealing → post-compile hardening.
+`--post-obfuscate` is opt-in and includes stripping, then randomizes retained
+private symbol names using a per-build seed. Code/data section contents, symbol
+addresses/types, exports/imports and post-strip relocations are checked before
+returning the object. A failed check or missing tool returns an error. Section
+names are preserved for linker scripts; public names and arbitrary strings remain.
+Some formats discard all eligible locals during stripping, so the receipt may
+honestly report zero names renamed.
+
+This stage supports relocatable 64-bit little-endian Mach-O/ELF (arm64/x86-64)
+and standard COFF x86-64. Linked/signed executables, archives, embedded LTO and
+extended COFF relocations are rejected. Run it before linking/signing; builds
+that inspect private symbol names should leave it disabled. It does not pack
+executables, rewrite instructions, or establish immunity to AI-assisted analysis.
+The encrypted code at rest comes from sealing. Example without sealing:
+`veil protect --post-obfuscate app.o -o app.hardened.o`.
+
+For just metadata removal, the lighter `--strip` option remains available.
 `--strip` uses `llvm-strip --strip-debug -x`, preserving exports and locals needed
 by relocations. `veil protect --strip app.o -o app.stripped.o` strips an object
 without sealing. Stripping removes analysis metadata; it does not encrypt code or

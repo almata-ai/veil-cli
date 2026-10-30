@@ -109,7 +109,9 @@ func cmdProtect(args []string) error {
 	obfuscate := fs.Bool("obfuscate", false, "obfuscate (source/IR); default MBA + decoys, lighter")
 	obfMax := fs.Bool("obfuscate-max", false, "obfuscate: whole-module max (adds control-flow flattening; heavier)")
 	seal := fs.Bool("seal", false, "seal the annotated functions (encrypt at rest)")
+	scope := fs.String("scope", "", "sealed: restrict optional IR obfuscation to the exact function selected for sealing")
 	strip := fs.Bool("strip", false, "remove debug info and discardable local symbols after protection (also works alone on objects)")
+	postObfuscate := fs.Bool("post-obfuscate", false, "post-compile metadata hardening: strip and anonymize retained locals, with code/data and ABI checks; objects only")
 	sealKey := fs.String("seal-key", "embedded", "seal key mode: embedded | device-bound")
 	level := fs.String("level", "", "legacy alias: obfuscate | seal | device-bound (maps to --obfuscate/--seal)")
 	var protos multiFlag
@@ -119,7 +121,7 @@ func cmdProtect(args []string) error {
 	persistent := fs.Bool("persistent", false, "seal: cache the decrypted function (default scrubs per call)")
 	antiDebug := fs.Bool("anti-debug", false, "seal: fold a debugger-present check into the key")
 	keyProvider := fs.String("key-provider", "", "device-bound: runtime key-unwrap symbol")
-	seed := fs.String("seed", "", "obfuscate: fixed build seed (0x…) for a reproducible build")
+	seed := fs.String("seed", "", "obfuscate/post-compile: fixed build seed (0x…) for reproducible transformations")
 	out := fs.String("out", "", "output path for the protected artifact (required)")
 	fs.StringVar(out, "o", "", "shorthand for --out")
 	receiptOut := fs.String("receipt", "", "write the build receipt JSON here")
@@ -148,10 +150,11 @@ func cmdProtect(args []string) error {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	doObf, doSeal, sk := *obfuscate, *seal, *sealKey
+	doPost, doStrip := *postObfuscate, *strip || *postObfuscate
 	if *obfMax {
 		doObf = true // --obfuscate-max implies --obfuscate
 	}
-	if !set["obfuscate"] && !set["seal"] && !*obfMax && (!*strip || *level != "") {
+	if !set["obfuscate"] && !set["seal"] && !*obfMax && (!doStrip || *level != "") {
 		lv := *level
 		if lv == "" {
 			lv = "seal"
@@ -167,8 +170,11 @@ func cmdProtect(args []string) error {
 			return fmt.Errorf("--level must be obfuscate | seal | device-bound")
 		}
 	}
-	if !doObf && !doSeal && !*strip {
-		return errors.New("choose at least one of --obfuscate / --seal / --strip")
+	if !doObf && !doSeal && !doStrip {
+		return errors.New("choose at least one of --obfuscate / --seal / --strip / --post-obfuscate")
+	}
+	if *scope != "" && (*scope != "sealed" || !doSeal) {
+		return errors.New("--scope sealed requires --seal")
 	}
 	deviceBound := doSeal && sk == "device-bound"
 	// A single-level label so an older gateway still understands the request.
@@ -196,17 +202,27 @@ func cmdProtect(args []string) error {
 		}
 	}
 
-	if *strip {
+	if doStrip {
 		if modeLabel != "" {
 			modeLabel += " + "
 		}
-		modeLabel += "strip"
+		if doPost {
+			modeLabel += "post-compile hardening"
+		} else {
+			modeLabel += "strip"
+		}
 	}
 
 	// Build the multipart request the same way the console does.
 	fields := map[string]string{"target": *target, "level": compatLevel}
-	if *strip {
+	if *scope != "" {
+		fields["scope"] = *scope
+	}
+	if doStrip {
 		fields["strip"] = "1"
+		if doPost {
+			fields["post_obfuscate"] = "1"
+		}
 	}
 	if doObf {
 		fields["obfuscate"] = "1"
@@ -306,7 +322,15 @@ func cmdProtect(args []string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	if *strip && receiptField(pr.Receipt, "strip") != "on" && !pr.Simulated {
+	if *scope == "sealed" && receiptField(pr.Receipt, "function_scope") == "" && !pr.Simulated {
+		return errors.New("server did not confirm selected-function scope; update the gateway and runner")
+	}
+
+	if doPost && receiptField(pr.Receipt, "post_obfuscate") != "on" && !pr.Simulated {
+		return errors.New("server did not confirm post-compile hardening; update the gateway and runner to support --post-obfuscate")
+	}
+
+	if doStrip && receiptField(pr.Receipt, "strip") != "on" && !pr.Simulated {
 		return errors.New("server did not confirm stripping; update the gateway and runner to support --strip")
 	}
 
