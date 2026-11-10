@@ -43,6 +43,8 @@ func main() {
 	switch os.Args[1] {
 	case "scan":
 		err = cmdScan(os.Args[2:])
+	case "release":
+		err = cmdRelease(os.Args[2:])
 	case "protect":
 		err = cmdProtect(os.Args[2:])
 	case "verify":
@@ -77,6 +79,8 @@ usage:
   veil whoami                                  show the workspace the current token belongs to
   veil scan    <input>                         exposure scan (free, unmetered): what AI reads first
   veil protect [flags] <input.o | source | ir> seal and/or obfuscate, write the artifact
+  veil release <audit|verify|protect> <file>   inspect or shield a release after linking
+  veil release local <command>                run the optional local project tools
   veil verify  <receipt.json> --artifact <f>   check a build receipt against its artifact
   veil version
 
